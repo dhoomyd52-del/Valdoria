@@ -27,15 +27,15 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="%", intents=intents)
 
-# الـ ID الخاص بالرول الذي طلبته
-ALLOWED_ROLE_IDS = [1506678566991958037] 
+# الرول المخصص لأمر friendly و lineup فقط
+SPECIFIC_ROLE_ID = 1506678566991958037
 
-def check_admin_role():
+def check_specific_role():
     async def predicate(ctx):
         if ctx.author.guild_permissions.administrator:
             return True
         for role in ctx.author.roles:
-            if role.id in ALLOWED_ROLE_IDS:
+            if role.id == SPECIFIC_ROLE_ID:
                 return True
         await ctx.send("عذراً، أنت لا تمتلك الرتبة المخصصة لاستخدام هذا الأمر.")
         return False
@@ -47,16 +47,16 @@ async def on_ready():
     print("Bot is ready and running!")
 
 
-# --- 3. Moderation Commands ---
+# --- 3. Moderation Commands (Admin / Discord Permissions Only) ---
 
 @bot.command(name="ban")
-@check_admin_role()
+@commands.has_permissions(ban_members=True)
 async def _ban(ctx, member: discord.Member, *, reason=None):
     await member.ban(reason=reason)
     await ctx.send(f"Successfully banned {member.mention}.")
 
 @bot.command(name="unban")
-@check_admin_role()
+@commands.has_permissions(ban_members=True)
 async def _unban(ctx, *, member_name):
     banned_users = await ctx.guild.bans()
     for ban_entry in banned_users:
@@ -68,36 +68,36 @@ async def _unban(ctx, *, member_name):
     await ctx.send("User not found in ban list.")
 
 @bot.command(name="kick")
-@check_admin_role()
+@commands.has_permissions(kick_members=True)
 async def _kick(ctx, member: discord.Member, *, reason=None):
     await member.kick(reason=reason)
     await ctx.send(f"Successfully kicked {member.mention}.")
 
 @bot.command(name="to")
-@check_admin_role()
+@commands.has_permissions(moderate_members=True)
 async def _timeout(ctx, member: discord.Member, minutes: int, *, reason=None):
     duration = timedelta(minutes=minutes)
     await member.timeout(duration, reason=reason)
     await ctx.send(f"Successfully timed out {member.mention} for {minutes} minutes.")
 
 @bot.command(name="rto")
-@check_admin_role()
+@commands.has_permissions(moderate_members=True)
 async def _remove_timeout(ctx, member: discord.Member):
     await member.timeout(None)
     await ctx.send(f"Successfully removed timeout for {member.mention}.")
 
 @bot.command(name="warn")
-@check_admin_role()
+@commands.has_permissions(manage_messages=True)
 async def _warn(ctx, member: discord.Member, *, reason="No reason provided"):
     await ctx.send(f"⚠️ Successfully warned {member.mention}. Reason: {reason}")
 
 @bot.command(name="rwarn")
-@check_admin_role()
+@commands.has_permissions(manage_messages=True)
 async def _remove_warn(ctx, member: discord.Member):
     await ctx.send(f"🔄 Successfully removed warning for {member.mention}.")
 
 
-# --- 4. Activity Command ---
+# --- 4. Activity Command (Available for Everyone) ---
 
 class ActivityView(discord.ui.View):
     def __init__(self):
@@ -133,7 +133,7 @@ async def _activity(ctx):
     await ctx.send("@everyone", embed=embed, view=view)
 
 
-# --- 5. Friendly Command (Protected by Role ID) ---
+# --- 5. Friendly Command (Restricted to the Specific Role ID) ---
 
 class FriendlyView(discord.ui.View):
     def __init__(self):
@@ -170,14 +170,14 @@ class FriendlyView(discord.ui.View):
         await interaction.message.edit(embed=embed, view=self)
 
 @bot.command(name="friendly")
-@check_admin_role()
+@check_specific_role()
 async def _friendly(ctx):
     embed = discord.Embed(title="Friendly Match List", description="No participants yet.\nClick the buttons below to join or leave:", color=discord.Color.blue())
     view = FriendlyView()
     await ctx.send("@everyone", embed=embed, view=view)
 
 
-# --- 6. Lineup Command (Protected by Role ID) ---
+# --- 6. Lineup Command (Restricted to the Specific Role ID) ---
 
 class LineupView(discord.ui.View):
     def __init__(self, host_mention):
@@ -248,7 +248,7 @@ One starter + one substitute per position. Leaving promotes the substitute.
         await self.update_embed(interaction)
 
 @bot.command(name="lineup")
-@check_admin_role()
+@check_specific_role()
 async def _lineup(ctx):
     desc = f"""
 Hosted by {ctx.author.mention}
