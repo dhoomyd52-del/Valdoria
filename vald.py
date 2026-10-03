@@ -27,6 +27,20 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="%", intents=intents)
 
+# الـ ID الخاص بالرول الذي طلبته
+ALLOWED_ROLE_IDS = [1506678566991958037] 
+
+def check_admin_role():
+    async def predicate(ctx):
+        if ctx.author.guild_permissions.administrator:
+            return True
+        for role in ctx.author.roles:
+            if role.id in ALLOWED_ROLE_IDS:
+                return True
+        await ctx.send("عذراً، أنت لا تمتلك الرتبة المخصصة لاستخدام هذا الأمر.")
+        return False
+    return commands.check(predicate)
+
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
@@ -36,13 +50,13 @@ async def on_ready():
 # --- 3. Moderation Commands ---
 
 @bot.command(name="ban")
-@commands.has_permissions(ban_members=True)
+@check_admin_role()
 async def _ban(ctx, member: discord.Member, *, reason=None):
     await member.ban(reason=reason)
     await ctx.send(f"Successfully banned {member.mention}.")
 
 @bot.command(name="unban")
-@commands.has_permissions(ban_members=True)
+@check_admin_role()
 async def _unban(ctx, *, member_name):
     banned_users = await ctx.guild.bans()
     for ban_entry in banned_users:
@@ -54,36 +68,36 @@ async def _unban(ctx, *, member_name):
     await ctx.send("User not found in ban list.")
 
 @bot.command(name="kick")
-@commands.has_permissions(kick_members=True)
+@check_admin_role()
 async def _kick(ctx, member: discord.Member, *, reason=None):
     await member.kick(reason=reason)
     await ctx.send(f"Successfully kicked {member.mention}.")
 
 @bot.command(name="to")
-@commands.has_permissions(moderate_members=True)
+@check_admin_role()
 async def _timeout(ctx, member: discord.Member, minutes: int, *, reason=None):
     duration = timedelta(minutes=minutes)
     await member.timeout(duration, reason=reason)
     await ctx.send(f"Successfully timed out {member.mention} for {minutes} minutes.")
 
 @bot.command(name="rto")
-@commands.has_permissions(moderate_members=True)
+@check_admin_role()
 async def _remove_timeout(ctx, member: discord.Member):
     await member.timeout(None)
     await ctx.send(f"Successfully removed timeout for {member.mention}.")
 
 @bot.command(name="warn")
-@commands.has_permissions(manage_messages=True)
+@check_admin_role()
 async def _warn(ctx, member: discord.Member, *, reason="No reason provided"):
     await ctx.send(f"⚠️ Successfully warned {member.mention}. Reason: {reason}")
 
 @bot.command(name="rwarn")
-@commands.has_permissions(manage_messages=True)
+@check_admin_role()
 async def _remove_warn(ctx, member: discord.Member):
     await ctx.send(f"🔄 Successfully removed warning for {member.mention}.")
 
 
-# --- 4. Activity Command (Top 3 with medals & @everyone mention) ---
+# --- 4. Activity Command ---
 
 class ActivityView(discord.ui.View):
     def __init__(self):
@@ -116,11 +130,10 @@ class ActivityView(discord.ui.View):
 async def _activity(ctx):
     embed = discord.Embed(title="Activity List", description="Click the button below to join (Top 3 win the podium):", color=discord.Color.gold())
     view = ActivityView()
-    # Pinging @everyone along with the message
     await ctx.send("@everyone", embed=embed, view=view)
 
 
-# --- 5. Friendly Command (Register/Remove with @everyone mention) ---
+# --- 5. Friendly Command (Protected by Role ID) ---
 
 class FriendlyView(discord.ui.View):
     def __init__(self):
@@ -157,14 +170,14 @@ class FriendlyView(discord.ui.View):
         await interaction.message.edit(embed=embed, view=self)
 
 @bot.command(name="friendly")
+@check_admin_role()
 async def _friendly(ctx):
     embed = discord.Embed(title="Friendly Match List", description="No participants yet.\nClick the buttons below to join or leave:", color=discord.Color.blue())
     view = FriendlyView()
-    # Pinging @everyone along with the message
     await ctx.send("@everyone", embed=embed, view=view)
 
 
-# --- 6. Lineup Command (Positions with @everyone mention) ---
+# --- 6. Lineup Command (Protected by Role ID) ---
 
 class LineupView(discord.ui.View):
     def __init__(self, host_mention):
@@ -235,6 +248,7 @@ One starter + one substitute per position. Leaving promotes the substitute.
         await self.update_embed(interaction)
 
 @bot.command(name="lineup")
+@check_admin_role()
 async def _lineup(ctx):
     desc = f"""
 Hosted by {ctx.author.mention}
@@ -251,7 +265,6 @@ Select your position using the buttons below:
 """
     embed = discord.Embed(title="⚽ Lineup • Lineup", description=desc, color=discord.Color.dark_green())
     view = LineupView(ctx.author.mention)
-    # Pinging @everyone along with the message
     await ctx.send("@everyone", embed=embed, view=view)
 
 
