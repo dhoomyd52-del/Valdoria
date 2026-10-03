@@ -47,7 +47,7 @@ async def on_ready():
     print("Bot is ready and running!")
 
 
-# --- 3. Moderation Commands (Admin / Discord Permissions Only) ---
+# --- 3. Moderation Commands ---
 
 @bot.command(name="ban")
 @commands.has_permissions(ban_members=True)
@@ -89,7 +89,7 @@ async def _remove_timeout(ctx, member: discord.Member):
 @bot.command(name="warn")
 @commands.has_permissions(manage_messages=True)
 async def _warn(ctx, member: discord.Member, *, reason="No reason provided"):
-    await ctx.send(f"⚠️ Successfully warned {member.mention}. Reason: {reason}")
+    await ctx.send(f"⚠️️ Successfully warned {member.mention}. Reason: {reason}")
 
 @bot.command(name="rwarn")
 @commands.has_permissions(manage_messages=True)
@@ -97,7 +97,7 @@ async def _remove_warn(ctx, member: discord.Member):
     await ctx.send(f"🔄 Successfully removed warning for {member.mention}.")
 
 
-# --- 4. Activity Command (Available for Everyone) ---
+# --- 4. Activity Command ---
 
 class ActivityView(discord.ui.View):
     def __init__(self):
@@ -133,7 +133,7 @@ async def _activity(ctx):
     await ctx.send("@everyone", embed=embed, view=view)
 
 
-# --- 5. Friendly Command (Restricted to the Specific Role ID) ---
+# --- 5. Friendly Command ---
 
 class FriendlyView(discord.ui.View):
     def __init__(self):
@@ -177,7 +177,7 @@ async def _friendly(ctx):
     await ctx.send("@everyone", embed=embed, view=view)
 
 
-# --- 6. Lineup Command (Restricted to the Specific Role ID) ---
+# --- 6. Lineup Command (Updated: Limit 1 position per user + Leave Position button) ---
 
 class LineupView(discord.ui.View):
     def __init__(self, host_mention):
@@ -205,47 +205,64 @@ One starter + one substitute per position. Leaving promotes the substitute.
         embed = discord.Embed(title="⚽ Lineup • Lineup", description=desc, color=discord.Color.dark_green())
         await interaction.message.edit(embed=embed, view=self)
 
+    async def handle_position(self, interaction: discord.Interaction, pos_name: str):
+        # التحقق مما إذا كان اللاعب مسجلاً مسبقاً في مركز آخر
+        for pos, user in self.lineup.items():
+            if user == interaction.user.mention:
+                if pos == pos_name:
+                    await interaction.response.send_message("You are already in this position!", ephemeral=True)
+                else:
+                    await interaction.response.send_message(f"You are already registered in **{pos}**. Please leave your current position first using 'Leave position'.", ephemeral=True)
+                return
+
+        if self.lineup[pos_name] == "Open":
+            self.lineup[pos_name] = interaction.user.mention
+            await interaction.response.send_message(f"You have taken the {pos_name} position.", ephemeral=True)
+            await self.update_embed(interaction)
+        else:
+            await interaction.response.send_message(f"Sorry, the {pos_name} position is already taken.", ephemeral=True)
+
     @discord.ui.button(label="GK", style=discord.ButtonStyle.secondary, custom_id="pos_gk")
     async def pos_gk(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.lineup["GK"] = interaction.user.mention
-        await interaction.response.send_message("You have taken the GK position.", ephemeral=True)
-        await self.update_embed(interaction)
+        await self.handle_position(interaction, "GK")
 
     @discord.ui.button(label="LB", style=discord.ButtonStyle.secondary, custom_id="pos_lb")
     async def pos_lb(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.lineup["LB"] = interaction.user.mention
-        await interaction.response.send_message("You have taken the LB position.", ephemeral=True)
-        await self.update_embed(interaction)
+        await self.handle_position(interaction, "LB")
 
     @discord.ui.button(label="CB", style=discord.ButtonStyle.secondary, custom_id="pos_cb")
     async def pos_cb(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.lineup["CB"] = interaction.user.mention
-        await interaction.response.send_message("You have taken the CB position.", ephemeral=True)
-        await self.update_embed(interaction)
+        await self.handle_position(interaction, "CB")
 
     @discord.ui.button(label="RB", style=discord.ButtonStyle.secondary, custom_id="pos_rb")
     async def pos_rb(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.lineup["RB"] = interaction.user.mention
-        await interaction.response.send_message("You have taken the RB position.", ephemeral=True)
-        await self.update_embed(interaction)
+        await self.handle_position(interaction, "RB")
 
     @discord.ui.button(label="LW", style=discord.ButtonStyle.secondary, custom_id="pos_lw")
     async def pos_lw(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.lineup["LW"] = interaction.user.mention
-        await interaction.response.send_message("You have taken the LW position.", ephemeral=True)
-        await self.update_embed(interaction)
+        await self.handle_position(interaction, "LW")
 
     @discord.ui.button(label="RW", style=discord.ButtonStyle.secondary, custom_id="pos_rw")
     async def pos_rw(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.lineup["RW"] = interaction.user.mention
-        await interaction.response.send_message("You have taken the RW position.", ephemeral=True)
-        await self.update_embed(interaction)
+        await self.handle_position(interaction, "RW")
 
     @discord.ui.button(label="ST", style=discord.ButtonStyle.secondary, custom_id="pos_st")
     async def pos_st(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.lineup["ST"] = interaction.user.mention
-        await interaction.response.send_message("You have taken the ST position.", ephemeral=True)
-        await self.update_embed(interaction)
+        await self.handle_position(interaction, "ST")
+
+    @discord.ui.button(label="Leave position", style=discord.ButtonStyle.danger, custom_id="pos_leave", row=2)
+    async def pos_leave(self, interaction: discord.Interaction, button: discord.ui.Button):
+        found = False
+        for pos, user in self.lineup.items():
+            if user == interaction.user.mention:
+                self.lineup[pos] = "Open"
+                found = True
+        
+        if found:
+            await interaction.response.send_message("You have left your position.", ephemeral=True)
+            await self.update_embed(interaction)
+        else:
+            await interaction.response.send_message("You are not registered in any position.", ephemeral=True)
 
 @bot.command(name="lineup")
 @check_specific_role()
