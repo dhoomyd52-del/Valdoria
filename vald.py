@@ -20,7 +20,7 @@ def keep_alive():
     t = Thread(target=run)
     t.start()
 
-# --- 2. Persistent Views (لحل مشكلة توقف الأزرار بعد فترة) ---
+# --- 2. Persistent Views ---
 class ActivityView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -87,7 +87,7 @@ class LineupView(discord.ui.View):
             "LW": "Open", "RW": "Open", "ST": "Open"
         }
 
-    async def update_embed(self, interaction):
+    async def update_embed(self, message):
         desc = f"""
 Hosted by {self.host_mention}
 
@@ -102,7 +102,7 @@ Hosted by {self.host_mention}
 One starter + one substitute per position. Leaving promotes the substitute.
 """
         embed = discord.Embed(title="⚽ Lineup • Lineup", description=desc, color=discord.Color.dark_green())
-        await interaction.message.edit(embed=embed, view=self)
+        await message.edit(embed=embed, view=self)
 
     async def handle_position(self, interaction: discord.Interaction, pos_name: str):
         for pos, user in self.lineup.items():
@@ -116,7 +116,7 @@ One starter + one substitute per position. Leaving promotes the substitute.
         if self.lineup[pos_name] == "Open":
             self.lineup[pos_name] = interaction.user.mention
             await interaction.response.send_message(f"You have taken the {pos_name} position.", ephemeral=True)
-            await self.update_embed(interaction)
+            await self.update_embed(interaction.message)
         else:
             await interaction.response.send_message(f"Sorry, the {pos_name} position is already taken.", ephemeral=True)
 
@@ -158,9 +158,64 @@ One starter + one substitute per position. Leaving promotes the substitute.
         
         if found:
             await interaction.response.send_message("You have left your position.", ephemeral=True)
-            await self.update_embed(interaction)
+            await self.update_embed(interaction.message)
         else:
             await interaction.response.send_message("You are not registered in any position.", ephemeral=True)
+
+# نظام زر رابط روبلوكس والقائمة المطلوبة
+class RobloxLinkView(discord.ui.View):
+    def __init__(self, game_url: str):
+        super().__init__(timeout=None)
+        self.game_url = game_url
+        self.joined_users = [] # قائمة تخزين الأشخاص الذين ضغطوا على الزر
+        # إضافة زر الانتقال للرابط خارجيًا
+        self.add_item(discord.ui.Button(label="Join Game Link", style=discord.ButtonStyle.link, url=game_url))
+
+    @discord.ui.button(label="I Have Joined / Click Here", style=discord.ButtonStyle.green, custom_id="roblox_join_btn", row=1)
+    async def join_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user not in self.joined_users:
+            self.joined_users.append(interaction.user)
+            await interaction.response.send_message("Your attendance has been recorded successfully!", ephemeral=True)
+        else:
+            await interaction.response.send_message("You have already registered your attendance!", ephemeral=True)
+
+        await self.update_link_embed(interaction)
+
+    async def update_link_embed(self, interaction):
+        # البحث عن التشكيلة النشطة لمعرفة المراكز في نفس الروم إن وجدت
+        active_lineup = {}
+        for v in bot.persistent_views:
+            if isinstance(v, LineupView):
+                for pos, user_mention in v.lineup.items():
+                    if user_mention != "Open":
+                        active_lineup[user_mention] = pos
+
+        players_list = []
+        fans_list = []
+
+        for user in self.joined_users:
+            if user.mention in active_lineup:
+                pos = active_lineup[user.mention]
+                players_list.append(f"{pos} - {user.mention}")
+            else:
+                fans_list.append(f"{user.display_name} fan")
+
+        desc = "**Who Join from The Link**\n"
+        if players_list:
+            for idx, p in enumerate(players_list, 1):
+                desc += f"{idx}- {p}\n"
+        else:
+            desc += "No players joined yet.\n"
+
+        desc += "\n----------\n\n**Fans:**\n"
+        if fans_list:
+            for f in fans_list:
+                desc += f"{f}\n"
+        else:
+            desc += "No fans yet."
+
+        embed = discord.Embed(title="🎮 Roblox Game Session", description=desc, color=discord.Color.blurple())
+        await interaction.message.edit(embed=embed, view=self)
 
 # --- 3. Bot Setup ---
 intents = discord.Intents.default()
@@ -195,7 +250,6 @@ async def on_ready():
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
     print("Bot is ready and running!")
 
-# --- استقبال رسائل الخاص وتحويلها إلى bot-messages ---
 @bot.event
 async def on_message(message):
     if message.author.bot:
@@ -305,6 +359,18 @@ async def _dmall(ctx, role: discord.Role, *, message_content: str):
 
     await status_msg.edit(content=f"✅ Done! Successfully sent to **{success_count}** members. (Failed: {fail_count})")
 
+@bot.command(name="purge")
+@commands.has_permissions(manage_messages=True)
+async def _purge(ctx, amount: int):
+    await ctx.message.delete()
+    deleted = await ctx.channel.purge(limit=amount)
+    msg = await ctx.send(f"🧹 Successfully deleted {len(deleted)} messages.")
+    await discord.utils.sleep_until(discord.utils.utcnow() + timedelta(seconds=3))
+    try:
+        await msg.delete()
+    except:
+        pass
+
 
 # --- 5. Activity Command ---
 @bot.command(name="activity")
@@ -323,7 +389,7 @@ async def _friendly(ctx):
     await ctx.send("@everyone", embed=embed, view=view)
 
 
-# --- 7. Lineup Command ---
+# --- 7. Lineup & Force Commands ---
 @bot.command(name="lineup")
 @check_specific_role()
 async def _lineup(ctx):
@@ -342,6 +408,78 @@ Select your position using the buttons below:
 """
     embed = discord.Embed(title="⚽ Lineup • Lineup", description=desc, color=discord.Color.dark_green())
     view = LineupView(ctx.author.mention)
+    # نسجل الـ view في bot.persistent_views لكي يتمكن أمر الـ link من قراءتها
+    bot.persistent_views.append(view)
+    await ctx.send("@everyone", embed=embed, view=view)
+
+@bot.command(name="force")
+@check_specific_role()
+async def _force(ctx, member: discord.Member, position: str):
+    if not ctx.message.reference:
+        await ctx.send("Please reply to the lineup message using this command.")
+        return
+
+    pos_upper = position.upper()
+    valid_positions = ["GK", "LB", "CB", "RB", "LW", "RW", "ST"]
+    if pos_upper not in valid_positions:
+        await ctx.send(f"Invalid position! Choose from: {', '.join(valid_positions)}")
+        return
+
+    try:
+        ref_message = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+    except:
+        await ctx.send("Could not find the referenced lineup message.")
+        return
+
+    embed = ref_message.embeds[0]
+    desc = embed.description
+
+    lines = desc.split("\n")
+    new_lines = []
+    for line in lines:
+        if line.startswith(f"**{pos_upper}**"):
+            new_lines.append(f"**{pos_upper}** - {member.mention}")
+        else:
+            new_lines.append(line)
+    
+    new_desc = "\n".join(new_lines)
+    updated_embed = discord.Embed(title=embed.title, description=new_desc, color=embed.color)
+    
+    for v in bot.persistent_views:
+        if isinstance(v, LineupView):
+            v.lineup[pos_upper] = member.mention
+            await ref_message.edit(embed=updated_embed, view=v)
+            break
+    else:
+        new_view = LineupView()
+        new_view.lineup[pos_upper] = member.mention
+        await ref_message.edit(embed=updated_embed, view=new_view)
+
+    await ctx.message.delete()
+    confirmation = await ctx.send(f"Successfully forced {member.mention} into **{pos_upper}**.")
+    await discord.utils.sleep_until(discord.utils.utcnow() + timedelta(seconds=3))
+    try:
+        await confirmation.delete()
+    except:
+        pass
+
+
+# --- 8. Link Command (جديد) ---
+@bot.command(name="link")
+@check_specific_role()
+async def _link(ctx, game_url: str):
+    await ctx.message.delete()
+    desc = """
+**Who Join from The Link**
+No players joined yet.
+
+----------
+
+**Fans:**
+No fans yet.
+"""
+    embed = discord.Embed(title="🎮 Roblox Game Session", description=desc, color=discord.Color.blurple())
+    view = RobloxLinkView(game_url)
     await ctx.send("@everyone", embed=embed, view=view)
 
 
