@@ -29,20 +29,16 @@ class ActivityView(discord.ui.View):
     @discord.ui.button(label="React for activity", style=discord.ButtonStyle.green, custom_id="act_btn")
     async def activity_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user not in self.participants:
-            if len(self.participants) < 3:
-                self.participants.append(interaction.user)
-                await interaction.response.send_message("Your participation has been recorded!", ephemeral=True)
-            else:
-                await interaction.response.send_message("Sorry, the maximum slots (top 3) are filled.", ephemeral=True)
+            self.participants.append(interaction.user)
+            await interaction.response.send_message("Your participation has been recorded!", ephemeral=True)
         else:
             await interaction.response.send_message("You are already registered!", ephemeral=True)
 
-        desc = "Fastest participants list:\n\n"
-        medals = ["🥇", "🥈", "🥉"]
-        for i, user in enumerate(self.participants):
-            desc += f"{medals[i]} {user.mention}\n"
-        
-        if not self.participants:
+        desc = f"**Total Participants:** {len(self.participants)}\n\nParticipants list:\n"
+        if self.participants:
+            for i, user in enumerate(self.participants, 1):
+                desc += f"{i}. {user.mention}\n"
+        else:
             desc += "No participants yet."
 
         embed = discord.Embed(title="Activity List", description=desc, color=discord.Color.gold())
@@ -170,7 +166,7 @@ One starter + one substitute per position. Leaving promotes the substitute.
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-intents.dm_messages = True # مهم لاستقبال ردود الأعضاء في الخاص
+intents.dm_messages = True
 
 class MyBot(commands.Bot):
     async def setup_hook(self):
@@ -199,16 +195,13 @@ async def on_ready():
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
     print("Bot is ready and running!")
 
-# --- الرصد التلقائي لرسائل الخاص وتحويلها إلى روم bot-messages ---
+# --- استقبال رسائل الخاص وتحويلها إلى bot-messages ---
 @bot.event
 async def on_message(message):
-    # تجاهل رسائل البوت نفسه لمنع التداخل
     if message.author.bot:
         return
 
-    # إذا كانت الرسالة في الخاص (DM)
     if isinstance(message.channel, discord.DMChannel):
-        # البحث عن روم bot-messages في جميع السيرفرات التي يشارك فيها البوت
         target_channel = None
         for guild in bot.guilds:
             channel = discord.utils.get(guild.text_channels, name="bot-messages")
@@ -225,11 +218,10 @@ async def on_message(message):
             embed.set_author(name=f"{message.author} (ID: {message.author.id})", icon_url=message.author.display_avatar.url)
             await target_channel.send(embed=embed)
 
-    # السماح بقراءة الأوامر العادية في السيرفرات
     await bot.process_commands(message)
 
 
-# --- 4. Moderation Commands ---
+# --- 4. Moderation & Admin Commands ---
 
 @bot.command(name="ban")
 @commands.has_permissions(ban_members=True)
@@ -271,7 +263,6 @@ async def _remove_timeout(ctx, member: discord.Member):
 @bot.command(name="warn")
 @commands.has_permissions(manage_messages=True)
 async def _warn(ctx, member: discord.Member, *, reason="No reason provided"):
-    # محاولة إرسال رسالة خاصة للعضو بالتحذير والسبب
     try:
         dm_embed = discord.Embed(
             title="⚠ Warning Received",
@@ -290,7 +281,6 @@ async def _warn(ctx, member: discord.Member, *, reason="No reason provided"):
 async def _remove_warn(ctx, member: discord.Member):
     await ctx.send(f"🔄 Successfully removed warning for {member.mention}.")
 
-# --- جديد: أمر dmall لإرسال رسالة جماعية لأصحاب رتبة معينة ---
 @bot.command(name="dmall")
 @commands.has_permissions(administrator=True)
 async def _dmall(ctx, role: discord.Role, *, message_content: str):
@@ -310,8 +300,6 @@ async def _dmall(ctx, role: discord.Role, *, message_content: str):
             )
             await member.send(embed=embed)
             success_count += 1
-        except discord.Forbidden:
-            fail_count + 1
         except Exception:
             fail_count += 1
 
@@ -321,7 +309,7 @@ async def _dmall(ctx, role: discord.Role, *, message_content: str):
 # --- 5. Activity Command ---
 @bot.command(name="activity")
 async def _activity(ctx):
-    embed = discord.Embed(title="Activity List", description="Click the button below to join (Top 3 win the podium):", color=discord.Color.gold())
+    embed = discord.Embed(title="Activity List", description="**Total Participants:** 0\n\nNo participants yet.\nClick the button below to join:", color=discord.Color.gold())
     view = ActivityView()
     await ctx.send("@everyone", embed=embed, view=view)
 
