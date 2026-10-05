@@ -6,7 +6,7 @@ from discord.ext import commands
 from discord import app_commands
 from datetime import timedelta
 
-# --- 1. Flask server to keep bot alive 24/7 on Render ---
+# --- 1. Flask server to keep bot alive ---
 app = Flask('')
 
 @app.route('/')
@@ -21,7 +21,9 @@ def keep_alive():
     t = Thread(target=run)
     t.start()
 
-# --- 2. Persistent Views ---
+# --- 2. Persistent Views & Data ---
+warnings_db = {} # {user_id: [reasons]}
+
 class ActivityView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -79,13 +81,35 @@ class FriendlyView(discord.ui.View):
         embed = discord.Embed(title="Friendly Match List", description=desc, color=discord.Color.blue())
         await interaction.message.edit(embed=embed, view=self)
 
+class RobloxQueueView(discord.ui.View):
+    def __init__(self, game_url: str):
+        super().__init__(timeout=None)
+        self.game_url = game_url
+        self.add_item(discord.ui.Button(label="Join Game Link", style=discord.ButtonStyle.link, url=game_url))
+
+class PutLinkModal(discord.ui.Modal, title="Set Roblox Game Link"):
+    link_input = discord.ui.TextInput(
+        label="Roblox Game Link",
+        placeholder="https://www.roblox.com/games/...",
+        style=discord.TextStyle.short,
+        required=True
+    )
+
+    def __init__(self, lineup_view):
+        super().__init__()
+        self.lineup_view = lineup_view
+
+    async def on_submit(self, interaction: discord.Interaction):
+        self.lineup_view.game_url = self.link_input.value
+        await interaction.response.send_message(f"✅ Game link has been updated successfully by {interaction.user.mention}!", ephemeral=True)
+
 class LineupView(discord.ui.View):
     def __init__(self, host_mention="Server Host"):
         super().__init__(timeout=None)
         self.host_mention = host_mention
-        # كل مركز يحتوي على قائمة [الأساسي، الاحتياط] أو "Open" إذا كان فارغاً
+        self.game_url = "https://www.roblox.com"
         self.lineup = {
-            "ST": [], "LW": [], "RW": [], "LB": [], "CB": [], "RB": [], "GK": []
+            "GK": [], "LB": [], "CB": [], "RB": [], "LW": [], "RW": [], "ST": []
         }
 
     async def update_embed(self, message):
@@ -94,22 +118,24 @@ class LineupView(discord.ui.View):
             if not users:
                 return "Open"
             elif len(users) == 1:
-                return users[0].mention
+                return f"{users[0].mention}"
             else:
-                return f"{users[0].mention} & {users[1].mention} (Sub)"
+                return f"{users[0].mention} · Sub {users[1].mention}"
 
         desc = f"""
 Hosted by {self.host_mention}
 
-**ST** - {format_pos('ST')}
-**LW** - {format_pos('LW')}
-**RW** - {format_pos('RW')}
+**GK** - {format_pos('GK')}
 **LB** - {format_pos('LB')}
 **CB** - {format_pos('CB')}
 **RB** - {format_pos('RB')}
-**GK** - {format_pos('GK')}
+**LW** - {format_pos('LW')}
+**RW** - {format_pos('RW')}
+**ST** - {format_pos('ST')}
 
 One starter + one substitute per position. Leaving promotes the substitute.
+
+Note: Your click is registered immediately.
 """
         embed = discord.Embed(title="⚽ Lineup • Lineup", description=desc, color=discord.Color.dark_green())
         await message.edit(embed=embed, view=self)
@@ -117,7 +143,6 @@ One starter + one substitute per position. Leaving promotes the substitute.
     async def handle_position(self, interaction: discord.Interaction, pos_name: str):
         user = interaction.user
         
-        # التأكد مما إذا كان المستخدم مسجلاً مسبقاً في أي مركز آخر
         for pos, users in self.lineup.items():
             if user in users:
                 if pos == pos_name:
@@ -126,7 +151,6 @@ One starter + one substitute per position. Leaving promotes the substitute.
                     await interaction.response.send_message(f"You are already registered in **{pos}**. Please leave your current position first.", ephemeral=True)
                 return
 
-        # إضافة المستخدم للمركز (أول واحد = أساسي، الثاني = احتياط)
         if len(self.lineup[pos_name]) == 0:
             self.lineup[pos_name].append(user)
             await interaction.response.send_message(f"You have taken the {pos_name} position as a starter.", ephemeral=True)
@@ -138,33 +162,33 @@ One starter + one substitute per position. Leaving promotes the substitute.
         else:
             await interaction.response.send_message(f"Sorry, the {pos_name} position and its substitute slot are already full.", ephemeral=True)
 
-    @discord.ui.button(label="ST", style=discord.ButtonStyle.secondary, custom_id="pos_st")
-    async def pos_st(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.handle_position(interaction, "ST")
+    @discord.ui.button(label="GK", style=discord.ButtonStyle.secondary, custom_id="pos_gk", row=0)
+    async def pos_gk(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.handle_position(interaction, "GK")
 
-    @discord.ui.button(label="LW", style=discord.ButtonStyle.secondary, custom_id="pos_lw")
-    async def pos_lw(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.handle_position(interaction, "LW")
-
-    @discord.ui.button(label="RW", style=discord.ButtonStyle.secondary, custom_id="pos_rw")
-    async def pos_rw(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.handle_position(interaction, "RW")
-
-    @discord.ui.button(label="LB", style=discord.ButtonStyle.secondary, custom_id="pos_lb")
+    @discord.ui.button(label="LB", style=discord.ButtonStyle.secondary, custom_id="pos_lb", row=0)
     async def pos_lb(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.handle_position(interaction, "LB")
 
-    @discord.ui.button(label="CB", style=discord.ButtonStyle.secondary, custom_id="pos_cb")
+    @discord.ui.button(label="CB", style=discord.ButtonStyle.secondary, custom_id="pos_cb", row=0)
     async def pos_cb(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.handle_position(interaction, "CB")
 
-    @discord.ui.button(label="RB", style=discord.ButtonStyle.secondary, custom_id="pos_rb")
+    @discord.ui.button(label="RB", style=discord.ButtonStyle.secondary, custom_id="pos_rb", row=0)
     async def pos_rb(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.handle_position(interaction, "RB")
 
-    @discord.ui.button(label="GK", style=discord.ButtonStyle.secondary, custom_id="pos_gk")
-    async def pos_gk(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.handle_position(interaction, "GK")
+    @discord.ui.button(label="LW", style=discord.ButtonStyle.secondary, custom_id="pos_lw", row=0)
+    async def pos_lw(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.handle_position(interaction, "LW")
+
+    @discord.ui.button(label="RW", style=discord.ButtonStyle.secondary, custom_id="pos_rw", row=1)
+    async def pos_rw(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.handle_position(interaction, "RW")
+
+    @discord.ui.button(label="ST", style=discord.ButtonStyle.secondary, custom_id="pos_st", row=1)
+    async def pos_st(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.handle_position(interaction, "ST")
 
     @discord.ui.button(label="Leave position", style=discord.ButtonStyle.danger, custom_id="pos_leave", row=2)
     async def pos_leave(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -181,70 +205,44 @@ One starter + one substitute per position. Leaving promotes the substitute.
         else:
             await interaction.response.send_message("You are not registered in any position.", ephemeral=True)
 
-class RobloxLinkView(discord.ui.View):
-    def __init__(self, game_url: str):
-        super().__init__(timeout=None)
-        self.game_url = game_url
-        self.joined_users = []
-        # زر الرابط يدمج فتح الرابط وتسجيل الحضور فوراً بمجرد الضغط عليه
-        self.add_item(discord.ui.Button(label="Join Game Link", style=discord.ButtonStyle.link, url=game_url))
+    @discord.ui.button(label="Clear board", style=discord.ButtonStyle.danger, custom_id="pos_clear", row=2)
+    async def pos_clear(self, interaction: discord.Interaction, button: discord.ui.Button):
+        for pos in self.lineup:
+            self.lineup[pos].clear()
+        await interaction.response.send_message("🧹 Board has been cleared!", ephemeral=True)
+        await self.update_embed(interaction.message)
 
-    # تم إضافة زر داخلي يسجل الحضور تلقائياً عند التفاعل مع رسالة الرابط أو تحديثها
-    @discord.ui.button(label="Check In / Update Attendance", style=discord.ButtonStyle.green, custom_id="roblox_join_btn", row=1)
-    async def join_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user not in self.joined_users:
-            self.joined_users.append(interaction.user)
-            await interaction.response.send_message("Your attendance has been recorded automatically!", ephemeral=True)
-        else:
-            await interaction.response.send_message("Your attendance is already updated!", ephemeral=True)
+    @discord.ui.button(label="Put Link", style=discord.ButtonStyle.secondary, custom_id="put_link", row=3)
+    async def put_link(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(PutLinkModal(self))
 
-        await self.update_link_embed(interaction)
-
-    async def update_link_embed(self, interaction):
-        active_lineup = {}
-        for v in bot.persistent_views:
-            if isinstance(v, LineupView):
-                for pos, users in v.lineup.items():
-                    if len(users) >= 1:
-                        active_lineup[users[0]] = f"{pos}"
-                    if len(users) >= 2:
-                        active_lineup[users[1]] = f"{pos} (Sub)"
-
-        # الترتيب المطلوب للمراكز في قائمة الرابط
-        order_priority = ["ST", "LW", "RW", "LB", "CB", "RB", "GK"]
-        players_dict = {pos: [] for pos in order_priority}
-        fans_list = []
-
-        for user in self.joined_users:
-            if user in active_lineup:
-                pos_info = active_lineup[user]
-                base_pos = pos_info.split(" ")[0]
-                if base_pos in players_dict:
-                    players_dict[base_pos].append((user, pos_info))
-            else:
-                fans_list.append(f"{user.display_name} fan")
-
-        desc = "**Who Join from The Link**\n"
-        has_players = False
+    @discord.ui.button(label="Get Friendly Link", style=discord.ButtonStyle.success, custom_id="get_friendly_link", row=3)
+    async def get_friendly_link(self, interaction: discord.Interaction, button: discord.ui.Button):
+        order_priority = ["GK", "LB", "CB", "RB", "LW", "RW", "ST"]
+        
+        desc = f"**Match host:** {self.host_mention}\n**Link put by:** {interaction.user.mention}\n\n"
+        
         idx = 1
+        has_players = False
         for pos in order_priority:
-            for user, pos_info in players_dict[pos]:
-                has_players = true if 'has_players' in locals() else True
-                desc += f"{idx}- {pos_info} - {user.mention}\n"
+            users = self.lineup[pos]
+            if len(users) >= 1:
+                has_players = True
+                desc += f"{idx}. {users[0].display_name} ({users[0].mention}) · {pos} · Starter\n"
+                idx += 1
+            if len(users) >= 2:
+                has_players = True
+                desc += f"{idx}. {users[1].display_name} ({users[1].mention}) · {pos} · Sub\n"
                 idx += 1
 
         if not has_players:
-            desc += "No players joined yet.\n"
+            desc += "No players confirmed yet.\n"
 
-        desc += "\n----------\n\n**Fans:**\n"
-        if fans_list:
-            for f in fans_list:
-                desc += f"{f}\n"
-        else:
-            desc += "No fans yet."
+        desc += f"\n{idx-1 if has_players else 0} players confirmed and received the private friendly link.\nPositions update automatically from the live lineup."
 
-        embed = discord.Embed(title="🎮 Roblox Game Session", description=desc, color=discord.Color.blurple())
-        await interaction.message.edit(embed=embed, view=self)
+        embed = discord.Embed(title="STM Queue", description=desc, color=discord.Color.blurple())
+        view = RobloxQueueView(self.game_url)
+        await interaction.response.send_message(embed=embed, view=view)
 
 # --- 3. Bot Setup ---
 intents = discord.Intents.default()
@@ -273,14 +271,12 @@ SPECIFIC_ROLE_ID = 1506678566991958037
 
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user} (ID: {bot.user.id})")
-    print("Bot is ready and running!")
+    print(f"Logged in as {bot.user}")
 
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
-
     if isinstance(message.channel, discord.DMChannel):
         target_channel = None
         for guild in bot.guilds:
@@ -288,7 +284,6 @@ async def on_message(message):
             if channel:
                 target_channel = channel
                 break
-        
         if target_channel:
             embed = discord.Embed(
                 title="📩 New Direct Message Received",
@@ -297,7 +292,6 @@ async def on_message(message):
             )
             embed.set_author(name=f"{message.author} (ID: {message.author.id})", icon_url=message.author.display_avatar.url)
             await target_channel.send(embed=embed)
-
     await bot.process_commands(message)
 
 async def has_custom_privilege(interaction_or_ctx):
@@ -308,227 +302,224 @@ async def has_custom_privilege(interaction_or_ctx):
         return True
     return False
 
+# --- 4. Moderation & Admin Commands ---
 
-# --- 4. Moderation & Admin Commands (Prefix & Slash) ---
-
-@bot.tree.command(name="ban", description="Ban a member from the server")
-@app_commands.describe(member="The member to ban", reason="Reason for ban")
+# Ban & Unban & Banlist
+@bot.tree.command(name="ban", description="Ban a member")
 async def slash_ban(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided"):
     if not interaction.user.guild_permissions.ban_members:
-        await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
+        await interaction.response.send_message("No permission.", ephemeral=True)
         return
-    await interaction.response.defer(ephemeral=True)
-    try:
-        await member.ban(reason=reason)
-        await interaction.followup.send(f"Successfully banned {member.mention}.")
-    except Exception as e:
-        await interaction.followup.send(f"Failed to ban member: {e}")
+    await member.ban(reason=reason)
+    await interaction.response.send_message(f"Banned {member.mention}.")
 
 @bot.command(name="ban")
 @commands.has_permissions(ban_members=True)
 async def _ban(ctx, member: discord.Member, *, reason=None):
     await member.ban(reason=reason)
-    await ctx.send(f"Successfully banned {member.mention}.")
+    await ctx.send(f"Banned {member.mention}.")
 
-
-@bot.tree.command(name="unban", description="Unban a member by name")
-@app_commands.describe(member_name="The exact username to unban")
-async def slash_unban(interaction: discord.Interaction, member_name: str):
+@bot.tree.command(name="unban", description="Unban a user by ID")
+async def slash_unban(interaction: discord.Identifier if False else discord.Interaction, user_id: str, reason: str = "No reason provided"):
     if not interaction.user.guild_permissions.ban_members:
-        await interaction.response.send_message("You don't have permission.", ephemeral=True)
+        await interaction.response.send_message("No permission.", ephemeral=True)
         return
-    await interaction.response.defer(ephemeral=True)
-    banned_users = await interaction.guild.bans()
-    for ban_entry in banned_users:
-        user = ban_entry.user
-        if user.name == member_name:
-            await interaction.guild.unban(user)
-            await interaction.followup.send(f"Successfully unbanned {user.mention}.")
-            return
-    await interaction.followup.send("User not found in ban list.")
+    try:
+        user = await bot.fetch_user(int(user_id))
+        await interaction.guild.unban(user, reason=reason)
+        await interaction.response.send_message(f"Unbanned {user.mention}.")
+    except Exception as e:
+        await interaction.response.send_message(f"Failed to unban: {e}", ephemeral=True)
 
 @bot.command(name="unban")
 @commands.has_permissions(ban_members=True)
-async def _unban(ctx, *, member_name):
-    banned_users = await ctx.guild.bans()
-    for ban_entry in banned_users:
-        user = ban_entry.user
-        if user.name == member_name:
-            await ctx.guild.unban(user)
-            await ctx.send(f"Successfully unbanned {user.mention}.")
-            return
-    await ctx.send("User not found in ban list.")
+async def _unban(ctx, user_id: str, *, reason=None):
+    try:
+        user = await bot.fetch_user(int(user_id))
+        await ctx.guild.unban(user, reason=reason)
+        await ctx.send(f"Unbanned {user.mention}.")
+    except Exception as e:
+        await ctx.send(f"Failed to unban: {e}")
 
+@bot.tree.command(name="banlist", description="Show banned users list")
+async def slash_banlist(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.ban_members:
+        await interaction.response.send_message("No permission.", ephemeral=True)
+        return
+    bans = [entry async for entry in interaction.guild.bans(limit=20)]
+    if not bans:
+        await interaction.response.send_message("No banned users.", ephemeral=True)
+        return
+    desc = "\n".join([f"• {b.user} (ID: {b.user.id})" for b in bans])
+    embed = discord.Embed(title="Ban List", description=desc, color=discord.Color.red())
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="kick", description="Kick a member from the server")
-@app_commands.describe(member="The member to kick", reason="Reason for kick")
+@bot.command(name="banlist")
+@commands.has_permissions(ban_members=True)
+async def _banlist(ctx):
+    bans = [entry async for entry in ctx.guild.bans(limit=20)]
+    if not bans:
+        await ctx.send("No banned users.")
+        return
+    desc = "\n".join([f"• {b.user} (ID: {b.user.id})" for b in bans])
+    embed = discord.Embed(title="Ban List", description=desc, color=discord.Color.red())
+    await ctx.send(embed=embed)
+
+# Kick
+@bot.tree.command(name="kick", description="Kick a member")
 async def slash_kick(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided"):
     if not interaction.user.guild_permissions.kick_members:
-        await interaction.response.send_message("You don't have permission.", ephemeral=True)
+        await interaction.response.send_message("No permission.", ephemeral=True)
         return
-    await interaction.response.defer(ephemeral=True)
     await member.kick(reason=reason)
-    await interaction.followup.send(f"Successfully kicked {member.mention}.")
+    await interaction.response.send_message(f"Kicked {member.mention}.")
 
 @bot.command(name="kick")
 @commands.has_permissions(kick_members=True)
 async def _kick(ctx, member: discord.Member, *, reason=None):
     await member.kick(reason=reason)
-    await ctx.send(f"Successfully kicked {member.mention}.")
+    await ctx.send(f"Kicked {member.mention}.")
 
-
+# Timeout (To & Rto)
 @bot.tree.command(name="to", description="Timeout a member")
-@app_commands.describe(member="Member", minutes="Minutes to timeout", reason="Reason")
 async def slash_timeout(interaction: discord.Interaction, member: discord.Member, minutes: int, reason: str = "No reason"):
     if not interaction.user.guild_permissions.moderate_members:
-        await interaction.response.send_message("You don't have permission.", ephemeral=True)
+        await interaction.response.send_message("No permission.", ephemeral=True)
         return
-    await interaction.response.defer(ephemeral=True)
-    duration = timedelta(minutes=minutes)
-    await member.timeout(duration, reason=reason)
-    await interaction.followup.send(f"Successfully timed out {member.mention} for {minutes} minutes.")
+    await member.timeout(timedelta(minutes=minutes), reason=reason)
+    await interaction.response.send_message(f"Timed out {member.mention} for {minutes} minutes.")
 
 @bot.command(name="to")
 @commands.has_permissions(moderate_members=True)
 async def _timeout(ctx, member: discord.Member, minutes: int, *, reason=None):
-    duration = timedelta(minutes=minutes)
-    await member.timeout(duration, reason=reason)
-    await ctx.send(f"Successfully timed out {member.mention} for {minutes} minutes.")
-
+    await member.timeout(timedelta(minutes=minutes), reason=reason)
+    await ctx.send(f"Timed out {member.mention} for {minutes} minutes.")
 
 @bot.tree.command(name="rto", description="Remove timeout from a member")
-async def slash_remove_timeout(interaction: discord.Interaction, member: discord.Member):
+async def slash_rto(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason"):
     if not interaction.user.guild_permissions.moderate_members:
-        await interaction.response.send_message("You don't have permission.", ephemeral=True)
+        await interaction.response.send_message("No permission.", ephemeral=True)
         return
-    await interaction.response.defer(ephemeral=True)
-    await member.timeout(None)
-    await interaction.followup.send(f"Successfully removed timeout for {member.mention}.")
+    await member.timeout(None, reason=reason)
+    await interaction.response.send_message(f"Removed timeout from {member.mention}.")
 
 @bot.command(name="rto")
 @commands.has_permissions(moderate_members=True)
-async def _remove_timeout(ctx, member: discord.Member):
-    await member.timeout(None)
-    await ctx.send(f"Successfully removed timeout for {member.mention}.")
+async def _rto(ctx, member: discord.Member, *, reason=None):
+    await member.timeout(None, reason=reason)
+    await ctx.send(f"Removed timeout from {member.mention}.")
 
-
+# Warnings (Warn, Rwarn, Warnlist)
 @bot.tree.command(name="warn", description="Warn a member")
 async def slash_warn(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided"):
     if not interaction.user.guild_permissions.manage_messages:
-        await interaction.response.send_message("You don't have permission.", ephemeral=True)
+        await interaction.response.send_message("No permission.", ephemeral=True)
         return
-    await interaction.response.defer(ephemeral=True)
+    if member.id not in warnings_db:
+        warnings_db[member.id] = []
+    warnings_db[member.id].append(reason)
     try:
-        dm_embed = discord.Embed(title="⚠ Warning Received", description=f"You have been warned in **{interaction.guild.name}**.\n\n**Reason:** {reason}", color=discord.Color.orange())
-        await member.send(embed=dm_embed)
-        dm_status = "and DM sent."
+        await member.send(f"Warning in {interaction.guild.name}: {reason}")
     except:
-        dm_status = "but DMs are closed."
-    await interaction.followup.send(f"⚠ Warned {member.mention} {dm_status} Reason: {reason}")
+        pass
+    await interaction.response.send_message(f"Warned {member.mention}. Total warnings: {len(warnings_db[member.id])}")
 
 @bot.command(name="warn")
 @commands.has_permissions(manage_messages=True)
 async def _warn(ctx, member: discord.Member, *, reason="No reason provided"):
+    if member.id not in warnings_db:
+        warnings_db[member.id] = []
+    warnings_db[member.id].append(reason)
     try:
-        await member.send(embed=discord.Embed(title="⚠ Warning", description=f"You have been warned in **{ctx.guild.name}**. Reason: {reason}", color=discord.Color.orange()))
+        await member.send(f"Warning in {ctx.guild.name}: {reason}")
     except:
         pass
-    await ctx.send(f"⚠ Warned {member.mention}. Reason: {reason}")
+    await ctx.send(f"Warned {member.mention}. Total warnings: {len(warnings_db[member.id])}")
 
-
-@bot.tree.command(name="rwarn", description="Remove warning from a member")
-async def slash_rwarn(interaction: discord.Interaction, member: discord.Member):
+@bot.tree.command(name="rwarn", description="Remove a warning from a member")
+async def slash_rwarn(interaction: discord.Interaction, member: discord.Member, index: int):
     if not interaction.user.guild_permissions.manage_messages:
-        await interaction.response.send_message("You don't have permission.", ephemeral=True)
+        await interaction.response.send_message("No permission.", ephemeral=True)
         return
-    await interaction.response.send_message(f"🔄 Successfully removed warning for {member.mention}.", ephemeral=True)
+    if member.id in warnings_db and warnings_db[member.id]:
+        if 1 <= index <= len(warnings_db[member.id]):
+            removed = warnings_db[member.id].pop(index - 1)
+            await interaction.response.send_message(f"Removed warning for {member.mention}: `{removed}`")
+        else:
+            await interaction.response.send_message("Invalid warning index number.", ephemeral=True)
+    else:
+        await interaction.response.send_message("This member has no warnings.", ephemeral=True)
 
 @bot.command(name="rwarn")
 @commands.has_permissions(manage_messages=True)
-async def _remove_warn(ctx, member: discord.Member):
-    await ctx.send(f"🔄 Successfully removed warning for {member.mention}.")
+async def _rwarn(ctx, member: discord.Member, index: int):
+    if member.id in warnings_db and warnings_db[member.id]:
+        if 1 <= index <= len(warnings_db[member.id]):
+            removed = warnings_db[member.id].pop(index - 1)
+            await ctx.send(f"Removed warning for {member.mention}: `{removed}`")
+        else:
+            await ctx.send("Invalid warning index number.")
+    else:
+        await ctx.send("This member has no warnings.")
 
-
-@bot.tree.command(name="dmall", description="Send DM to a role")
-async def slash_dmall(interaction: discord.Interaction, role: discord.Role, message_content: str):
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("Admin only.", ephemeral=True)
+@bot.tree.command(name="warnlist", description="Show member's warnings")
+async def slash_warnlist(interaction: discord.Interaction, member: discord.Member):
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("No permission.", ephemeral=True)
         return
-    await interaction.response.send_message(f"⏳ Sending DMs to {role.mention}...", ephemeral=True)
-    success = 0
-    for m in role.members:
-        if not m.bot:
-            try:
-                await m.send(embed=discord.Embed(title=f"📢 Message from {interaction.guild.name}", description=message_content, color=discord.Color.blue()))
-                success += 1
-            except:
-                pass
-    await interaction.followup.send(f"✅ Sent to {success} members.", ephemeral=True)
+    if member.id in warnings_db and warnings_db[member.id]:
+        desc = "\n".join([f"{i+1}. {r}" for i, r in enumerate(warnings_db[member.id])])
+    else:
+        desc = "No warnings found."
+    embed = discord.Embed(title=f"Warnings for {member}", description=desc, color=discord.Color.orange())
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.command(name="dmall")
-@commands.has_permissions(administrator=True)
-async def _dmall(ctx, role: discord.Role, *, message_content: str):
-    success = 0
-    for m in role.members:
-        if not m.bot:
-            try:
-                await m.send(embed=discord.Embed(title=f"📢 Message from {ctx.guild.name}", description=message_content, color=discord.Color.blue()))
-                success += 1
-            except:
-                pass
-    await ctx.send(f"✅ Sent to {success} members.")
+@bot.command(name="warnlist")
+@commands.has_permissions(manage_messages=True)
+async def _warnlist(ctx, member: discord.Member):
+    if member.id in warnings_db and warnings_db[member.id]:
+        desc = "\n".join([f"{i+1}. {r}" for i, r in enumerate(warnings_db[member.id])])
+    else:
+        desc = "No warnings found."
+    embed = discord.Embed(title=f"Warnings for {member}", description=desc, color=discord.Color.orange())
+    await ctx.send(embed=embed)
 
-
+# Purge
 @bot.tree.command(name="purge", description="Delete messages")
 async def slash_purge(interaction: discord.Interaction, amount: int):
     if not interaction.user.guild_permissions.manage_messages:
-        await interaction.response.send_message("You don't have permission.", ephemeral=True)
+        await interaction.response.send_message("No permission.", ephemeral=True)
         return
-    await interaction.response.defer(ephemeral=True)
     deleted = await interaction.channel.purge(limit=amount)
-    msg = await interaction.followup.send(f"🧹 Deleted {len(deleted)} messages.")
-    await discord.utils.sleep_until(discord.utils.utcnow() + timedelta(seconds=3))
-    try:
-        await msg.delete()
-    except:
-        pass
+    await interaction.response.send_message(f"Deleted {len(deleted)} messages.", ephemeral=True)
 
 @bot.command(name="purge")
 @commands.has_permissions(manage_messages=True)
 async def _purge(ctx, amount: int):
     await ctx.message.delete()
-    deleted = await ctx.channel.purge(limit=amount)
-    msg = await ctx.send(f"🧹 Deleted {len(deleted)} messages.")
-    await discord.utils.sleep_until(discord.utils.utcnow() + timedelta(seconds=3))
-    try:
-        await msg.delete()
-    except:
-        pass
+    await ctx.channel.purge(limit=amount)
 
-
-# --- 5. Activity Command ---
+# --- 5. Activity & Friendly & Lineup Commands ---
 @bot.tree.command(name="activity", description="Create activity list")
 async def slash_activity(interaction: discord.Interaction):
-    embed = discord.Embed(title="Activity List", description="**Total Participants:** 0\n\nNo participants yet.\nClick the button below to join:", color=discord.Color.gold())
+    embed = discord.Embed(title="Activity List", description="**Total Participants:** 0\n\nNo participants yet.", color=discord.Color.gold())
     view = ActivityView()
     bot.persistent_views.append(view)
     await interaction.response.send_message("@everyone", embed=embed, view=view)
 
 @bot.command(name="activity")
 async def _activity(ctx):
-    embed = discord.Embed(title="Activity List", description="**Total Participants:** 0\n\nNo participants yet.\nClick the button below to join:", color=discord.Color.gold())
+    embed = discord.Embed(title="Activity List", description="**Total Participants:** 0\n\nNo participants yet.", color=discord.Color.gold())
     view = ActivityView()
     bot.persistent_views.append(view)
     await ctx.send("@everyone", embed=embed, view=view)
 
-
-# --- 6. Friendly Command ---
 @bot.tree.command(name="friendly", description="Create friendly match list")
 async def slash_friendly(interaction: discord.Interaction):
     if not await has_custom_privilege(interaction):
-        await interaction.response.send_message("You do not have the required role.", ephemeral=True)
+        await interaction.response.send_message("No permission.", ephemeral=True)
         return
-    embed = discord.Embed(title="Friendly Match List", description="No participants yet.\nClick the buttons below to join or leave:", color=discord.Color.blue())
+    embed = discord.Embed(title="Friendly Match List", description="No participants yet.", color=discord.Color.blue())
     view = FriendlyView()
     bot.persistent_views.append(view)
     await interaction.response.send_message("@everyone", embed=embed, view=view)
@@ -536,32 +527,32 @@ async def slash_friendly(interaction: discord.Interaction):
 @bot.command(name="friendly")
 async def _friendly(ctx):
     if not await has_custom_privilege(ctx):
-        await ctx.send("You do not have the required role.")
+        await ctx.send("No permission.")
         return
-    embed = discord.Embed(title="Friendly Match List", description="No participants yet.\nClick the buttons below to join or leave:", color=discord.Color.blue())
+    embed = discord.Embed(title="Friendly Match List", description="No participants yet.", color=discord.Color.blue())
     view = FriendlyView()
     bot.persistent_views.append(view)
     await ctx.send("@everyone", embed=embed, view=view)
 
-
-# --- 7. Lineup & Force Commands ---
 @bot.tree.command(name="lineup", description="Create lineup list")
 async def slash_lineup(interaction: discord.Interaction):
     if not await has_custom_privilege(interaction):
-        await interaction.response.send_message("You do not have the required role.", ephemeral=True)
+        await interaction.response.send_message("No permission.", ephemeral=True)
         return
     desc = f"""
 Hosted by {interaction.user.mention}
 
-**ST** - Open
-**LW** - Open
-**RW** - Open
+**GK** - Open
 **LB** - Open
 **CB** - Open
 **RB** - Open
-**GK** - Open
+**LW** - Open
+**RW** - Open
+**ST** - Open
 
-Select your position using the buttons below:
+One starter + one substitute per position. Leaving promotes the substitute.
+
+Note: Your click is registered immediately.
 """
     embed = discord.Embed(title="⚽ Lineup • Lineup", description=desc, color=discord.Color.dark_green())
     view = LineupView(interaction.user.mention)
@@ -571,127 +562,29 @@ Select your position using the buttons below:
 @bot.command(name="lineup")
 async def _lineup(ctx):
     if not await has_custom_privilege(ctx):
-        await ctx.send("You do not have the required role.")
+        await ctx.send("No permission.")
         return
     desc = f"""
 Hosted by {ctx.author.mention}
 
-**ST** - Open
-**LW** - Open
-**RW** - Open
+**GK** - Open
 **LB** - Open
 **CB** - Open
 **RB** - Open
-**GK** - Open
+**LW** - Open
+**RW** - Open
+**ST** - Open
 
-Select your position using the buttons below:
+One starter + one substitute per position. Leaving promotes the substitute.
+
+Note: Your click is registered immediately.
 """
     embed = discord.Embed(title="⚽ Lineup • Lineup", description=desc, color=discord.Color.dark_green())
     view = LineupView(ctx.author.mention)
     bot.persistent_views.append(view)
     await ctx.send("@everyone", embed=embed, view=view)
 
-@bot.tree.command(name="force", description="Force a user into a position (Reply to lineup message)")
-@app_commands.describe(member="Member to force", position="Position (ST, LW, RW, LB, CB, RB, GK)")
-async def slash_force(interaction: discord.Interaction, member: discord.Member, position: str):
-    await interaction.response.send_message("Please use the prefix command `%force` by replying to the lineup message, as slash commands cannot capture message references directly in Discord.", ephemeral=True)
-
-@bot.command(name="force")
-async def _force(ctx, member: discord.Member, position: str):
-    if not await has_custom_privilege(ctx):
-        await ctx.send("You do not have the required role.")
-        return
-    if not ctx.message.reference:
-        await ctx.send("Please reply to the lineup message using this command.")
-        return
-
-    pos_upper = position.upper()
-    valid_positions = ["ST", "LW", "RW", "LB", "CB", "RB", "GK"]
-    if pos_upper not in valid_positions:
-        await ctx.send(f"Invalid position! Choose from: {', '.join(valid_positions)}")
-        return
-
-    try:
-        ref_message = await ctx.channel.fetch_message(ctx.message.reference.message_id)
-    except:
-        await ctx.send("Could not find the referenced lineup message.")
-        return
-
-    for v in bot.persistent_views:
-        if isinstance(v, LineupView):
-            # إزالة المستخدم لو كان مسجلاً في مكان آخر
-            for p, users in v.lineup.items():
-                if member in users:
-                    users.remove(member)
-            
-            # إضافته للمركز الجديد
-            if len(v.lineup[pos_upper]) == 0:
-                v.lineup[pos_upper].append(member)
-            elif len(v.lineup[pos_upper]) == 1:
-                v.lineup[pos_upper].append(member)
-            else:
-                v.lineup[pos_upper][1] = member # استبدال الاحتياطي لو المركز مكتمل
-
-            await v.update_embed(ref_message)
-            break
-    else:
-        new_view = LineupView()
-        new_view.lineup[pos_upper] = [member]
-        await ref_message.edit(view=new_view)
-        await new_view.update_embed(ref_message)
-
-    await ctx.message.delete()
-    confirmation = await ctx.send(f"Successfully forced {member.mention} into **{pos_upper}**.")
-    await discord.utils.sleep_until(discord.utils.utcnow() + timedelta(seconds=3))
-    try:
-        await confirmation.delete()
-    except:
-        pass
-
-
-# --- 8. Link Command (Slash & Prefix) ---
-@bot.tree.command(name="link", description="Create roblox game join session list")
-@app_commands.describe(game_url="The Roblox game link")
-async def slash_link(interaction: discord.Interaction, game_url: str):
-    if not await has_custom_privilege(interaction):
-        await interaction.response.send_message("You do not have the required role.", ephemeral=True)
-        return
-    desc = """
-**Who Join from The Link**
-No players joined yet.
-
-----------
-
-**Fans:**
-No fans yet.
-"""
-    embed = discord.Embed(title="🎮 Roblox Game Session", description=desc, color=discord.Color.blurple())
-    view = RobloxLinkView(game_url)
-    bot.persistent_views.append(view)
-    await interaction.response.send_message("@everyone", embed=embed, view=view)
-
-@bot.command(name="link")
-async def _link(ctx, game_url: str):
-    if not await has_custom_privilege(ctx):
-        await ctx.send("You do not have the required role.")
-        return
-    await ctx.message.delete()
-    desc = """
-**Who Join from The Link**
-No players joined yet.
-
-----------
-
-**Fans:**
-No fans yet.
-"""
-    embed = discord.Embed(title="🎮 Roblox Game Session", description=desc, color=discord.Color.blurple())
-    view = RobloxLinkView(game_url)
-    bot.persistent_views.append(view)
-    await ctx.send("@everyone", embed=embed, view=view)
-
-
-# --- Run the Bot ---
+# --- Run Bot ---
 keep_alive()
 TOKEN = os.getenv('TOKEN')
 bot.run(TOKEN)
