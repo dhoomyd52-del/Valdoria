@@ -23,6 +23,14 @@ def keep_alive():
 
 # --- 2. Persistent Views & Data ---
 warnings_db = {} # {user_id: [reasons]}
+SPECIFIC_ROLE_ID = 1506678566991958037
+
+async def check_privilege(interaction: discord.Interaction):
+    if interaction.user.guild_permissions.administrator:
+        return True
+    if any(r.id == SPECIFIC_ROLE_ID for r in interaction.user.roles):
+        return True
+    return False
 
 class ActivityView(discord.ui.View):
     def __init__(self):
@@ -100,6 +108,9 @@ class PutLinkModal(discord.ui.Modal, title="Set Roblox Game Link"):
         self.lineup_view = lineup_view
 
     async def on_submit(self, interaction: discord.Interaction):
+        if not await check_privilege(interaction):
+            await interaction.response.send_message("❌ You do not have permission to use this button.", ephemeral=True)
+            return
         self.lineup_view.game_url = self.link_input.value
         await interaction.response.send_message(f"✅ Game link has been updated successfully by {interaction.user.mention}!", ephemeral=True)
 
@@ -143,6 +154,7 @@ Note: Your click is registered immediately.
     async def handle_position(self, interaction: discord.Interaction, pos_name: str):
         user = interaction.user
         
+        # التأكد أن المستخدم غير مسجل في أي مركز آخر مسبقاً لمنع التكرار
         for pos, users in self.lineup.items():
             if user in users:
                 if pos == pos_name:
@@ -207,6 +219,9 @@ Note: Your click is registered immediately.
 
     @discord.ui.button(label="Clear board", style=discord.ButtonStyle.danger, custom_id="pos_clear", row=2)
     async def pos_clear(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await check_privilege(interaction):
+            await interaction.response.send_message("❌ You do not have permission to clear the board.", ephemeral=True)
+            return
         for pos in self.lineup:
             self.lineup[pos].clear()
         await interaction.response.send_message("🧹 Board has been cleared!", ephemeral=True)
@@ -214,10 +229,17 @@ Note: Your click is registered immediately.
 
     @discord.ui.button(label="Put Link", style=discord.ButtonStyle.secondary, custom_id="put_link", row=3)
     async def put_link(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await check_privilege(interaction):
+            await interaction.response.send_message("❌ You do not have permission to use this button.", ephemeral=True)
+            return
         await interaction.response.send_modal(PutLinkModal(self))
 
     @discord.ui.button(label="Get Friendly Link", style=discord.ButtonStyle.success, custom_id="get_friendly_link", row=3)
     async def get_friendly_link(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await check_privilege(interaction):
+            await interaction.response.send_message("❌ You do not have permission to use this button.", ephemeral=True)
+            return
+
         order_priority = ["GK", "LB", "CB", "RB", "LW", "RW", "ST"]
         
         desc = f"**Match host:** {self.host_mention}\n**Link put by:** {interaction.user.mention}\n\n"
@@ -267,8 +289,6 @@ class MyBot(commands.Bot):
 
 bot = MyBot()
 
-SPECIFIC_ROLE_ID = 1506678566991958037
-
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
@@ -294,17 +314,8 @@ async def on_message(message):
             await target_channel.send(embed=embed)
     await bot.process_commands(message)
 
-async def has_custom_privilege(interaction_or_ctx):
-    author = interaction_or_ctx.user if isinstance(interaction_or_ctx, discord.Interaction) else interaction_or_ctx.author
-    if author.guild_permissions.administrator:
-        return True
-    if any(r.id == SPECIFIC_ROLE_ID for r in author.roles):
-        return True
-    return False
-
 # --- 4. Moderation & Admin Commands ---
 
-# Ban & Unban & Banlist
 @bot.tree.command(name="ban", description="Ban a member")
 async def slash_ban(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided"):
     if not interaction.user.guild_permissions.ban_members:
@@ -320,7 +331,7 @@ async def _ban(ctx, member: discord.Member, *, reason=None):
     await ctx.send(f"Banned {member.mention}.")
 
 @bot.tree.command(name="unban", description="Unban a user by ID")
-async def slash_unban(interaction: discord.Identifier if False else discord.Interaction, user_id: str, reason: str = "No reason provided"):
+async def slash_unban(interaction: discord.Interaction, user_id: str, reason: str = "No reason provided"):
     if not interaction.user.guild_permissions.ban_members:
         await interaction.response.send_message("No permission.", ephemeral=True)
         return
@@ -365,7 +376,6 @@ async def _banlist(ctx):
     embed = discord.Embed(title="Ban List", description=desc, color=discord.Color.red())
     await ctx.send(embed=embed)
 
-# Kick
 @bot.tree.command(name="kick", description="Kick a member")
 async def slash_kick(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided"):
     if not interaction.user.guild_permissions.kick_members:
@@ -380,7 +390,6 @@ async def _kick(ctx, member: discord.Member, *, reason=None):
     await member.kick(reason=reason)
     await ctx.send(f"Kicked {member.mention}.")
 
-# Timeout (To & Rto)
 @bot.tree.command(name="to", description="Timeout a member")
 async def slash_timeout(interaction: discord.Interaction, member: discord.Member, minutes: int, reason: str = "No reason"):
     if not interaction.user.guild_permissions.moderate_members:
@@ -409,7 +418,6 @@ async def _rto(ctx, member: discord.Member, *, reason=None):
     await member.timeout(None, reason=reason)
     await ctx.send(f"Removed timeout from {member.mention}.")
 
-# Warnings (Warn, Rwarn, Warnlist)
 @bot.tree.command(name="warn", description="Warn a member")
 async def slash_warn(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided"):
     if not interaction.user.guild_permissions.manage_messages:
@@ -484,7 +492,6 @@ async def _warnlist(ctx, member: discord.Member):
     embed = discord.Embed(title=f"Warnings for {member}", description=desc, color=discord.Color.orange())
     await ctx.send(embed=embed)
 
-# Purge
 @bot.tree.command(name="purge", description="Delete messages")
 async def slash_purge(interaction: discord.Interaction, amount: int):
     if not interaction.user.guild_permissions.manage_messages:
@@ -516,7 +523,7 @@ async def _activity(ctx):
 
 @bot.tree.command(name="friendly", description="Create friendly match list")
 async def slash_friendly(interaction: discord.Interaction):
-    if not await has_custom_privilege(interaction):
+    if not await check_privilege(interaction):
         await interaction.response.send_message("No permission.", ephemeral=True)
         return
     embed = discord.Embed(title="Friendly Match List", description="No participants yet.", color=discord.Color.blue())
@@ -526,7 +533,7 @@ async def slash_friendly(interaction: discord.Interaction):
 
 @bot.command(name="friendly")
 async def _friendly(ctx):
-    if not await has_custom_privilege(ctx):
+    if not await check_privilege(ctx):
         await ctx.send("No permission.")
         return
     embed = discord.Embed(title="Friendly Match List", description="No participants yet.", color=discord.Color.blue())
@@ -536,7 +543,7 @@ async def _friendly(ctx):
 
 @bot.tree.command(name="lineup", description="Create lineup list")
 async def slash_lineup(interaction: discord.Interaction):
-    if not await has_custom_privilege(interaction):
+    if not await check_privilege(interaction):
         await interaction.response.send_message("No permission.", ephemeral=True)
         return
     desc = f"""
@@ -561,7 +568,7 @@ Note: Your click is registered immediately.
 
 @bot.command(name="lineup")
 async def _lineup(ctx):
-    if not await has_custom_privilege(ctx):
+    if not await check_privilege(ctx):
         await ctx.send("No permission.")
         return
     desc = f"""
